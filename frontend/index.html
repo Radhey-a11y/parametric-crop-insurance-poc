@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Parametric Micro-Insurance</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.5/ethers.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark" aria-hidden="true">π</div>
+      <div>
+        <h1>Decentralized Parametric Micro-Insurance</h1>
+        <p>Instant crop insurance payouts, triggered by weather data, not paperwork</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div id="networkBadge" class="network-badge"><span class="status-dot"></span><span id="networkText">Checking network</span></div>
+      <div id="walletInfo" class="wallet-chip"><span class="wallet-icon">◈</span><span>Not connected</span></div>
+      <button id="networkButton" class="button secondary compact">Switch network</button>
+      <button id="connectButton" class="button primary compact">Connect MetaMask</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="roleLabel" class="role-label">You are connected as: <strong>Guest</strong></div>
+
+    <section class="how-it-works" aria-label="How it works">
+      <div class="step"><span>1</span><strong>Provider funds pool</strong></div>
+      <div class="step-line"></div>
+      <div class="step"><span>2</span><strong>Farmer buys policy</strong></div>
+      <div class="step-line"></div>
+      <div class="step"><span>3</span><strong>Oracle reports rainfall</strong></div>
+      <div class="step-line"></div>
+      <div class="step"><span>4</span><strong>Payout happens automatically</strong></div>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="card provider-card">
+        <div class="card-heading">
+          <div class="section-icon provider-icon">◆</div>
+          <div><span class="eyebrow">Capital</span><h2>Insurance Provider</h2></div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card" id="vaultCard"><div class="stat-icon">◈</div><span>Vault balance</span><strong id="vaultBalance">— mUSDC</strong></div>
+          <div class="stat-card"><div class="stat-icon">▣</div><span>Reserved</span><strong id="reservedAmount">— mUSDC</strong></div>
+          <div class="stat-card"><div class="stat-icon">#</div><span>Policies</span><strong id="policyCount">—</strong></div>
+        </div>
+
+        <form id="fundForm" class="form-stack">
+          <label for="fundAmount">Fund pool amount <span>mUSDC</span></label>
+          <input id="fundAmount" type="number" min="0.000001" step="0.000001" placeholder="5000" required>
+          <p class="helper-text">Approves mUSDC, then transfers it into the insurance vault.</p>
+          <button id="fundButton" class="button primary full" type="submit">Fund Pool</button>
+        </form>
+      </article>
+
+      <article class="card farmer-card">
+        <div class="card-heading">
+          <div class="section-icon farmer-icon">♧</div>
+          <div><span class="eyebrow">Coverage</span><h2>Farmer</h2></div>
+        </div>
+
+        <button id="mintButton" class="button soft full mint-button">＋ Get 1000 test mUSDC</button>
+
+        <form id="policyForm" class="policy-form">
+          <div class="field full-field">
+            <label for="location">Farm location</label>
+            <input id="location" type="text" placeholder="Mandya, Karnataka" required>
+            <p class="helper-text">Area or district covered by this policy.</p>
+          </div>
+          <div class="field"><label for="rainfall">Rainfall threshold <span>mm</span></label><input id="rainfall" type="number" min="0" step="1" placeholder="50" required></div>
+          <div class="field"><label for="payout">Payout amount <span>mUSDC</span></label><input id="payout" type="number" min="0.000001" step="0.000001" placeholder="500" required></div>
+          <div class="field full-field"><label for="duration">Policy duration <span>days</span></label><input id="duration" type="number" min="1" step="1" placeholder="30" required></div>
+
+          <div class="premium-summary full-field">
+            <div><span>Calculated premium</span><strong id="premiumPreview">— mUSDC</strong></div>
+            <div><span>Projected payout</span><strong id="payoutPreview">— mUSDC</strong></div>
+            <div class="rate-pill">10% premium</div>
+          </div>
+          <button id="policyButton" class="button primary full full-field" type="submit">Buy Policy</button>
+        </form>
+      </article>
+    </section>
+
+    <section class="card policies-card">
+      <div class="card-heading table-heading">
+        <div class="heading-left"><div class="section-icon list-icon">≡</div><div><span class="eyebrow">Portfolio</span><h2>Policies</h2></div></div>
+        <button id="refreshButton" class="button secondary compact">↻ Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>Holder</th><th>Location</th><th>Threshold</th><th>Payout</th><th>Status</th></tr></thead>
+          <tbody id="policiesBody"><tr><td colspan="6" class="empty-state">Connect MetaMask to load policies.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="oracle-grid">
+      <article class="card oracle-card">
+        <div class="card-heading">
+          <div class="section-icon oracle-icon">☁</div>
+          <div><span class="eyebrow">Testing tool</span><h2>Weather Oracle</h2></div>
+        </div>
+        <div class="demo-banner"><strong>Demo only - simulates the weather oracle</strong><span id="oracleStatus">Connect your oracle account to enable weather reporting.</span></div>
+        <form id="weatherForm" class="weather-form">
+          <div class="field">
+            <label for="weatherPolicyId">Active policy</label>
+            <select id="weatherPolicyId" required><option value="">Select a policy</option></select>
+          </div>
+          <div class="field"><label for="actualRainfall">Actual rainfall <span>mm</span></label><input id="actualRainfall" type="number" min="0" step="1" placeholder="20" required></div>
+          <button id="weatherButton" class="button warning" type="submit">Report Weather</button>
+        </form>
+      </article>
+
+      <article class="card activity-card">
+        <div class="card-heading table-heading">
+          <div class="heading-left"><div class="section-icon activity-icon">⌁</div><div><span class="eyebrow">Blockchain</span><h2>Live activity</h2></div></div>
+          <span class="live-pill"><span></span> Live</span>
+        </div>
+        <div id="eventLog" class="event-feed"><div class="empty-feed">Waiting for blockchain events…</div></div>
+      </article>
+    </section>
+  </main>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
