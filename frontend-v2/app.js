@@ -40,6 +40,14 @@ const DEMO_ACCOUNTS = {
 
 let provider, signer, account, usdc, insurance, oracleAddress;
 let listenersInstalled = false;
+let demoMode = false;
+let activeDemoRole = "owner";
+// Public Hardhat test keys only. NEVER use these keys on a real network.
+const DEMO_PRIVATE_KEYS = {
+  owner:"0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  oracle:"0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+  farmer:"0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+};
 const payoutSnapshots = new Map();
 let wizardGoingBack = false;
 let wizardInitialized = false;
@@ -57,11 +65,99 @@ function showView(viewId){document.querySelectorAll(".view").forEach(view=>view.
 
 async function updateNetwork(){try{const chainId=await window.ethereum.request({method:"eth_chainId"});return chainId.toLowerCase()==HARDHAT_CHAIN_ID}catch(_){return false}}
 
+async function getConnectedChainId(){
+  if(window.ethereum){
+    try{
+      const chainId=await window.ethereum.request({method:"eth_chainId"});
+      return Number.parseInt(chainId,16);
+    }catch(_){}
+  }
+  try{
+    const chainProvider=new ethers.JsonRpcProvider("http://127.0.0.1:8545");
+    const network=await chainProvider.getNetwork();
+    return Number(network.chainId);
+  }catch(_){return null}
+}
+
+async function setActiveSignerContract(){
+  if(insurance?.removeAllListeners)insurance.removeAllListeners();
+  usdc=new ethers.Contract(USDC_ADDRESS,USDC_ABI,signer);
+  insurance=new ethers.Contract(INSURANCE_ADDRESS,INSURANCE_ABI,signer);
+  oracleAddress=await insurance.oracle();
+  listenersInstalled=false;
+  installEventListeners();
+  await refreshAll();
+}
+
+async function switchMetaMaskAccount(){
+  if(demoMode)return showToast("Turn off Demo mode to use MetaMask account switching.","info");
+  if(!window.ethereum)return showToast("MetaMask is not installed.","error");
+  try{
+    await window.ethereum.request({method:"wallet_requestPermissions",params:[{eth_accounts:{}}]});
+    const accounts=await window.ethereum.request({method:"eth_requestAccounts"});
+    account=accounts[0]||null;
+    if(!account)return showToast("No MetaMask account selected.","error");
+    provider=new ethers.BrowserProvider(window.ethereum);
+    signer=await provider.getSigner();
+    account=await signer.getAddress();
+    await setActiveSignerContract();
+    $("connectButton").textContent="Wallet connected";
+    showToast(`Switched to ${shortAddress(account)}.`,"success");
+  }catch(error){showToast(`Could not switch account: ${friendlyError(error)}`,"error")}
+}
+
+async function switchDemoRole(role){
+  if(!demoMode)return;
+  const chainId=await getConnectedChainId();
+  if(chainId!==31337){
+    showToast("Demo mode requires Hardhat chain 31337.","error");
+    return;
+  }
+  activeDemoRole=role;
+  try{
+    // Public Hardhat test keys only. NEVER use these keys on a real network.
+    provider=new ethers.JsonRpcProvider("http://127.0.0.1:8545");
+    signer=new ethers.Wallet(DEMO_PRIVATE_KEYS[role],provider);
+    account=await signer.getAddress();
+    await setActiveSignerContract();
+    $("connectButton").textContent="Demo account connected";
+    showView(role==="owner"?"fund":role==="oracle"?"weather":"buy");
+    showToast(`Demo role switched to ${role[0].toUpperCase()+role.slice(1)}.`,"success");
+  }catch(error){showToast(`Could not switch demo role: ${friendlyError(error)}`,"error")}
+}
+
+async function setDemoMode(enabled){
+  if(enabled){
+    const chainId=await getConnectedChainId();
+    if(chainId!==31337){
+      showToast("Demo mode is only allowed on Hardhat chain 31337.","error");
+      $("demoToggle").setAttribute("aria-pressed","false");
+      $("demoToggle").classList.remove("active");
+      $("demoRoleSelect").disabled=true;
+      $("demoModeStatus").textContent="Demo mode unavailable: connect to chain 31337.";
+      return false;
+    }
+  }
+  demoMode=enabled;
+  $("demoToggle").setAttribute("aria-pressed",String(enabled));
+  $("demoToggle").classList.toggle("active",enabled);
+  $("demoRoleSelect").disabled=!enabled;
+  $("switchAccountButton").disabled=enabled;
+  $("demoModeStatus").textContent=enabled?"Demo mode: local test keys":"Demo mode is OFF · MetaMask";
+  if(!enabled){
+    if(window.ethereum)await connectWallet();
+    else{provider=signer=usdc=insurance=null;account=null;$("heroRole").textContent="Connect wallet"}
+  }else{
+    await switchDemoRole($("demoRoleSelect").value||"owner");
+  }
+  return enabled;
+}
+
 async function connectWallet(){wizardGoingBack=false;if(!window.ethereum){showToast("MetaMask is not installed.","error");return}try{const accounts=await window.ethereum.request({method:"eth_requestAccounts"});account=accounts[0];provider=new ethers.BrowserProvider(window.ethereum);signer=await provider.getSigner();account=await signer.getAddress();usdc=new ethers.Contract(USDC_ADDRESS,USDC_ABI,signer);insurance=new ethers.Contract(INSURANCE_ADDRESS,INSURANCE_ABI,signer);oracleAddress=await insurance.oracle();installEventListeners();$("connectButton").textContent="Wallet connected";await refreshAll();if(!wizardGoingBack&&await updateNetwork()&&isFarmer()){setTimeout(async()=>{const balance=await usdc.balanceOf(account);const payout=ethers.parseUnits($("payout")?.value||"500",6);const premium=payout*1000n/10000n;if(balance>=premium){$("mintSkipNote").textContent="You already have enough mUSDC — Step 2 was skipped.";setWizardStep(3)}else setWizardStep(2)},1000)}}catch(error){showToast(`Could not connect: ${friendlyError(error)}`,"error")}}
 
 async function refreshAll(){if(!account)return;try{const [balance,vaultBalance,reserved,count,oracle]=await Promise.all([usdc.balanceOf(account),usdc.balanceOf(INSURANCE_ADDRESS),insurance.reserved(),insurance.policyCount(),insurance.oracle()]);oracleAddress=oracle;const formatted=ethers.formatUnits(balance,6);$("farmerBalance").textContent=`${formatted} mUSDC`;$("vaultBalance").textContent=`${ethers.formatUnits(vaultBalance,6)} mUSDC`;$("reservedAmount").textContent=`${ethers.formatUnits(reserved,6)} mUSDC`;$("policyCount").textContent=count.toString();$("homeVaultBalance").textContent=`${ethers.formatUnits(vaultBalance,6)} mUSDC`;$("homeReserved").textContent=`${ethers.formatUnits(reserved,6)} mUSDC`;$("homePolicyCount").textContent=count.toString();let paidOut=0n;for(let i=1n;i<=count;i++){const p=await insurance.policies(i);if(p[7])paidOut+=p[3]}$("homePaidOut").textContent=`${ethers.formatUnits(paidOut,6)} mUSDC`;const available=vaultBalance-reserved;if($("payout")&&$("wizardValidation")&&$("payout").value){const requested=ethers.parseUnits($("payout").value,6);$("wizardValidation").textContent=requested>available?`Payout exceeds the pool's available amount (${ethers.formatUnits(available,6)} mUSDC).` : $("wizardValidation").textContent}updateRole();await renderPolicies(count)}catch(error){showToast(`Could not refresh: ${friendlyError(error)}`,"error")}}
 
-function updateRole(){const roleAddress=(account||"").toLowerCase();let role="Guest";if(roleAddress===DEMO_ACCOUNTS.owner)role="Owner";else if(roleAddress===DEMO_ACCOUNTS.farmer)role="Farmer";else if(roleAddress===DEMO_ACCOUNTS.oracle)role="Oracle";$("heroRole").textContent=`${role} · ${shortAddress(account)}`;const isOwner=roleAddress===DEMO_ACCOUNTS.owner;const isOracle=roleAddress===DEMO_ACCOUNTS.oracle;$("fundLocked").style.display=isOwner?"none":"flex";$("fundContent").classList.toggle("locked",!isOwner);$("weatherLocked").style.display=isOracle?"none":"flex";$("weatherContent").classList.toggle("locked",!isOracle);if(isOracle)$("oracleStatus").textContent=`Oracle account connected: ${shortAddress(account)} — weather reporting is enabled.`;else $("oracleStatus").textContent=`Not the oracle account. Switch to ${shortAddress(oracleAddress||DEMO_ACCOUNTS.oracle)}`;$("buyLock").textContent=isFarmer()?"Farmer wallet connected. You can continue.":`Connected as ${role}. Account #2 is recommended for buying cover.`}
+function updateRole(){const roleAddress=(account||"").toLowerCase();let role="Guest";if(roleAddress===DEMO_ACCOUNTS.owner)role="Owner";else if(roleAddress===DEMO_ACCOUNTS.farmer)role="Farmer";else if(roleAddress===DEMO_ACCOUNTS.oracle)role="Oracle";$("heroRole").textContent=`${role} · ${shortAddress(account)}`;if($("demoModeBadge"))$("demoModeBadge").hidden=!demoMode;if($("demoModeStatus"))$("demoModeStatus").textContent=demoMode?"Demo mode: local test keys":"Demo mode is OFF · MetaMask";const isOwner=roleAddress===DEMO_ACCOUNTS.owner;const isOracle=roleAddress===DEMO_ACCOUNTS.oracle;$("fundLocked").style.display=isOwner?"none":"flex";$("fundContent").classList.toggle("locked",!isOwner);$("weatherLocked").style.display=isOracle?"none":"flex";$("weatherContent").classList.toggle("locked",!isOracle);if(isOracle)$("oracleStatus").textContent=`Oracle account connected: ${shortAddress(account)} — weather reporting is enabled.`;else $("oracleStatus").textContent=`Not the oracle account. Switch to ${shortAddress(oracleAddress||DEMO_ACCOUNTS.oracle)}`;$("buyLock").textContent=isFarmer()?"Farmer wallet connected. You can continue.":`Connected as ${role}. Account #2 is recommended for buying cover.`}
 
 function isFarmer(){return (account||"").toLowerCase()===DEMO_ACCOUNTS.farmer}
 
@@ -82,7 +178,7 @@ async function handleWeather(event){event.preventDefault();if(!account)return sh
 
 function setWizardStep(step){document.querySelectorAll(".wizard-panel").forEach(panel=>panel.classList.toggle("active",Number(panel.dataset.panel)===step));document.querySelectorAll(".wizard-step").forEach(button=>{const value=Number(button.dataset.step);button.classList.toggle("active",value===step);button.classList.toggle("done",value<step)})}
 
-window.addEventListener("load",()=>{document.querySelectorAll("[data-view]").forEach(button=>button.addEventListener("click",()=>showView(button.dataset.view)));$("menuToggle").addEventListener("click",()=>$("navLinks").classList.toggle("open"));$("connectButton").addEventListener("click",connectWallet);$("mintButton").addEventListener("click",handleMint);$("fundForm").addEventListener("submit",handleFund);$("policyForm").addEventListener("submit",e=>e.preventDefault());$("reviewPolicyButton").addEventListener("click",reviewPolicy);$("policyButton").addEventListener("click",handleBuyPolicy);$("weatherForm").addEventListener("submit",handleWeather);$("refreshButton").addEventListener("click",refreshAll);$("payout").addEventListener("input",updatePremium);document.querySelectorAll(".wizard-step").forEach(button=>button.addEventListener("click",()=>setWizardStep(Number(button.dataset.step))));$("demoToggle").addEventListener("click",event=>{const button=event.currentTarget;const enabled=button.getAttribute("aria-pressed")!=="true";button.setAttribute("aria-pressed",String(enabled));button.classList.toggle("active",enabled);document.querySelectorAll(".view").forEach(view=>view.classList.toggle("active",enabled));if(!enabled)showView("home")});if(window.ethereum){window.ethereum.on("accountsChanged",accounts=>{account=accounts[0]||null;usdc=null;insurance=null;listenersInstalled=false;if(account)connectWallet();else $("heroRole").textContent="Connect wallet"});window.ethereum.on("chainChanged",()=>window.location.reload())}updatePremium();if(window.ethereum)updateNetwork();
+window.addEventListener("load",()=>{document.querySelectorAll("[data-view]").forEach(button=>button.addEventListener("click",()=>showView(button.dataset.view)));$("menuToggle").addEventListener("click",()=>$("navLinks").classList.toggle("open"));$("connectButton").addEventListener("click",connectWallet);$("switchAccountButton").addEventListener("click",switchMetaMaskAccount);$("mintButton").addEventListener("click",handleMint);$("fundForm").addEventListener("submit",handleFund);$("policyForm").addEventListener("submit",e=>e.preventDefault());$("reviewPolicyButton").addEventListener("click",reviewPolicy);$("policyButton").addEventListener("click",handleBuyPolicy);$("weatherForm").addEventListener("submit",handleWeather);$("refreshButton").addEventListener("click",refreshAll);$("payout").addEventListener("input",updatePremium);document.querySelectorAll(".wizard-step").forEach(button=>button.addEventListener("click",()=>setWizardStep(Number(button.dataset.step))));$("demoToggle").addEventListener("click",()=>setDemoMode($("demoToggle").getAttribute("aria-pressed")!=="true"));$("demoRoleSelect").addEventListener("change",event=>switchDemoRole(event.target.value));if(window.ethereum){window.ethereum.on("accountsChanged",accounts=>{if(demoMode)return;if(accounts&&accounts.length){provider=new ethers.BrowserProvider(window.ethereum);provider.getSigner().then(async selectedSigner=>{signer=selectedSigner;account=await signer.getAddress();await setActiveSignerContract();$("connectButton").textContent="Wallet connected"})}else{account=null;provider=signer=usdc=insurance=null;$("heroRole").textContent="Connect wallet"}});window.ethereum.on("chainChanged",async()=>{if(demoMode){const chainId=await getConnectedChainId();if(chainId!==31337){demoMode=false;$("demoToggle").setAttribute("aria-pressed","false");$("demoRoleSelect").disabled=true;$("switchAccountButton").disabled=false;$("demoModeBadge").hidden=true;$("demoModeStatus").textContent="Demo mode unavailable: connect to chain 31337.";showToast("Demo mode disabled because the chain is no longer 31337.","error")}else await refreshAll()}else if(await updateNetwork()){await connectWallet()}else await refreshAll()})}updatePremium();if(window.ethereum)updateNetwork();getConnectedChainId().then(chainId=>{const allowed=chainId===31337;$("demoToggle").disabled=!allowed;if(!allowed){$("demoToggle").setAttribute("aria-pressed","false");$("demoRoleSelect").disabled=true;$("demoModeStatus").textContent="Demo mode unavailable: connect to chain 31337."}});
 
 if(window.ethereum&&!wizardInitialized){wizardInitialized=true;window.ethereum.request({method:"eth_accounts"}).then(async(accounts)=>{if(accounts&&accounts.length){account=accounts[0];provider=new ethers.BrowserProvider(window.ethereum);signer=await provider.getSigner();account=await signer.getAddress();usdc=new ethers.Contract(USDC_ADDRESS,USDC_ABI,signer);insurance=new ethers.Contract(INSURANCE_ADDRESS,INSURANCE_ABI,signer);oracleAddress=await insurance.oracle();installEventListeners();await refreshAll();if(await updateNetwork()&&isFarmer()){setTimeout(async()=>{const balance=await usdc.balanceOf(account);const payout=ethers.parseUnits($("payout")?.value||"500",6);const premium=payout*1000n/10000n;if(balance>=premium){$("mintSkipNote").textContent="You already have enough mUSDC";setWizardStep(3)}else setWizardStep(2)},300)}}}).catch(()=>{})}
 
